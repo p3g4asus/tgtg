@@ -18,6 +18,7 @@ from requests.exceptions import RequestException
 from tgtg_scanner._version import __author__, __description__, __url__, __version__
 from tgtg_scanner.errors import ConfigurationError, TgtgAPIError
 from tgtg_scanner.models import Config
+from tgtg_scanner.requests_logger import init_requests_logger
 from tgtg_scanner.scanner import Scanner
 
 VERSION_URL = "https://api.github.com/repos/Der-Henning/tgtg/releases/latest"
@@ -155,6 +156,7 @@ def main():
         if config.debug:
             for logger_name in logging.root.manager.loggerDict:
                 logging.getLogger(logger_name).setLevel(logging.DEBUG)
+            init_requests_logger(logging.DEBUG, file_handler)
             log.info("Debugging mode enabled")
 
         if args.base_url is not None:

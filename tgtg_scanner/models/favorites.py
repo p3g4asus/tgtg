@@ -35,7 +35,7 @@ class Favorites:
         Returns:
             bool: true, if the provided item ID is in the favorites
         """
-        return any(item for item in self.client.get_favorites() if Item(item).item_id == item_id)
+        return any(item for item in self.client.get_favorites2() if Item(item).item_id == item_id)
 
     def get_item_by_id(self, item_id: str) -> Item:
         """Gets an item by the Item ID
@@ -56,7 +56,7 @@ class Favorites:
         Return:
             List: List of favorite items
         """
-        return [Item(item) for item in self.client.get_favorites()]
+        return [Item(item) for item in self.client.get_favorites2()]
 
     def add_favorites(self, item_ids: List[str]) -> None:
         """Adds all the provided item IDs to the favorites

@@ -66,6 +66,14 @@ class BaseConfig(ABC):
         if value is not None:
             setattr(self, attr, value)
 
+    def _ini_get_float(self, parser: configparser.ConfigParser, section: str, key: str, attr: str):
+        try:
+            value = parser.getfloat(section, key, fallback=None)
+        except ValueError as err:
+            raise ConfigurationError(f"Invalid float value for {section}.{key} - {err}") from err
+        if value is not None:
+            setattr(self, attr, value)
+
     def _ini_get_list(self, parser: configparser.ConfigParser, section: str, key: str, attr: str):
         value = parser.get(section, key, fallback=None)
         if value is not None:
@@ -102,6 +110,14 @@ class BaseConfig(ABC):
         if value is not None:
             try:
                 setattr(self, attr, int(value))
+            except ValueError as err:
+                raise ConfigurationError(f"Invalid integer value for {key} - {err}") from err
+
+    def _env_get_float(self, key: str, attr: str):
+        value = environ.get(key, None)
+        if value is not None:
+            try:
+                setattr(self, attr, float(value))
             except ValueError as err:
                 raise ConfigurationError(f"Invalid integer value for {key} - {err}") from err
 
@@ -479,26 +495,35 @@ class TgtgConfig(BaseConfig):
     max_polling_tries: int = 24
     polling_wait_time: int = 5
     base_url: str = BASE_URL
+    agent: str = r"TGTG/25.4.1 Dalvik/2.1.0 (Linux; U; Android 12; sdk_gphone64_arm64 Build/SE1A.220203.002.A1)"
+    latitude: float = 42.9
+    longitude: float = 13.8
 
     def _read_ini(self, parser: configparser.ConfigParser):
         self._ini_get(parser, "TGTG", "Username", "username")
         self._ini_get(parser, "TGTG", "AccessToken", "access_token")
         self._ini_get(parser, "TGTG", "RefreshToken", "refresh_token")
         self._ini_get(parser, "TGTG", "Datadome", "datadome")
+        self._ini_get(parser, "TGTG", "Agent", "agent")
         self._ini_get_int(parser, "TGTG", "Timeout", "timeout")
         self._ini_get_int(parser, "TGTG", "AccessTokenLifetime", "access_token_lifetime")
         self._ini_get_int(parser, "TGTG", "MaxPollingTries", "max_polling_tries")
         self._ini_get_int(parser, "TGTG", "PollingWaitTime", "polling_wait_time")
+        self._ini_get_float(parser, "TGTG", "Latitude", "latitude")
+        self._ini_get_float(parser, "TGTG", "Longitude", "longitude")
 
     def _read_env(self):
         self._env_get("TGTG_USERNAME", "username")
         self._env_get("TGTG_ACCESS_TOKEN", "access_token")
         self._env_get("TGTG_REFRESH_TOKEN", "refresh_token")
         self._env_get("TGTG_DATADOME", "datadome")
+        self._env_get("TGTG_AGENT", "agent")
         self._env_get_int("TGTG_TIMEOUT", "timeout")
         self._env_get_int("TGTG_ACCESS_TOKEN_LIFETIME", "access_token_lifetime")
         self._env_get_int("TGTG_MAX_POLLING_TRIES", "max_polling_tries")
         self._env_get_int("TGTG_POLLING_WAIT_TIME", "polling_wait_time")
+        self._env_get_float("TGTG_LATITUDE", "latitude")
+        self._env_get_float("TGTG_LONGITUDE", "longitude")
 
 
 @dataclass

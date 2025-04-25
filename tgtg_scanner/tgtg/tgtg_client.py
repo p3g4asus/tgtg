@@ -9,6 +9,7 @@ from datetime import datetime
 from http import HTTPStatus
 from typing import List, Union
 from urllib.parse import urljoin, urlparse
+from uuid import uuid4
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -20,10 +21,13 @@ from tgtg_scanner.errors import (
     TgtgLoginError,
     TgtgPollingError,
 )
+from tgtg_scanner.requests_logger import hook_session
 
 log = logging.getLogger("tgtg")
 BASE_URL = "https://apptoogoodtogo.com/api/"
 API_ITEM_ENDPOINT = "item/v8/"
+API_ITEM2_ENDPOINT = "discover/v1"
+API_TRACKING_ENDPOINT = "tracking/v1/anonymousEvents"
 FAVORITE_ITEM_ENDPOINT = "user/favorite/v1/{}/update"
 AUTH_BY_EMAIL_ENDPOINT = "auth/v5/authByEmail"
 AUTH_POLLING_ENDPOINT = "auth/v5/authByRequestPollingId"
@@ -67,6 +71,7 @@ class TgtgSession(requests.Session):
         proxies: Union[dict, None] = None,
         datadome_cookie: Union[str, None] = None,
         base_url: str = BASE_URL,
+        uuid: Union[uuid4, None] = None,
         *args,
         **kwargs,
     ) -> None:
@@ -74,20 +79,26 @@ class TgtgSession(requests.Session):
         self.mount("https://", self.http_adapter)
         self.mount("http://", self.http_adapter)
         self.headers = {
-            "accept-language": language,
-            "accept": "application/json",
-            "content-type": "application/json; charset=utf-8",
+            "Accept-Language": language,
+            "Accept": "application/json",
+            "Content-Type": "application/json; charset=utf-8",
             "Accept-Encoding": "gzip",
+            "X-Correlation-ID": str(uuid4()) if uuid is None else str(uuid),
         }
         if user_agent:
-            self.headers["user-agent"] = user_agent
+            self.headers["User-Agent"] = user_agent
         self.timeout = timeout
         if proxies:
             self.proxies = proxies
+        self.base_url = base_url
         if datadome_cookie:
-            domain = urlparse(base_url).netloc.split(":")[0]
-            domain = f".{'local' if domain == 'localhost' else domain}"
-            self.cookies.set("datadome", datadome_cookie, domain=domain, path="/", secure=True)
+            self.set_datadome_cookie(datadome_cookie)
+
+    def set_datadome_cookie(self, datadome_cookie: str) -> None:
+        """Set datadome cookie for the session."""
+        domain = urlparse(self.base_url).netloc.split(":")[0]
+        domain = f".{'local' if domain == 'localhost' else domain}"
+        self.cookies.set("datadome", datadome_cookie, domain=domain, path="/", secure=True)
 
     def post(self, *args, access_token: Union[str, None] = None, **kwargs) -> requests.Response:
         headers = kwargs.get("headers")
@@ -114,13 +125,15 @@ class TgtgClient:
         refresh_token=None,
         datadome_cookie=None,
         user_agent=None,
-        language="en-GB",
+        language="en-US",
         proxies=None,
         timeout=None,
         access_token_lifetime=DEFAULT_ACCESS_TOKEN_LIFETIME,
         max_polling_tries=DEFAULT_MAX_POLLING_TRIES,
         polling_wait_time=DEFAULT_POLLING_WAIT_TIME,
         device_type="ANDROID",
+        latitude=0.0,
+        longitude=0.0,
     ):
         if base_url != BASE_URL:
             log.warn("Using custom tgtg base url: %s", base_url)
@@ -144,6 +157,9 @@ class TgtgClient:
         self.proxies = proxies
         self.timeout = timeout
         self.session = None
+        self.uuid = uuid4()
+        self.latitude = latitude
+        self.longitude = longitude
 
         self.captcha_error_count = 0
 
@@ -157,14 +173,15 @@ class TgtgClient:
     def _create_session(self) -> TgtgSession:
         if not self.user_agent:
             self.user_agent = self._get_user_agent()
-        return TgtgSession(
+        return hook_session(TgtgSession(
             self.user_agent,
             self.language,
             self.timeout,
             self.proxies,
             self.datadome_cookie,
             self.base_url,
-        )
+            self.uuid,
+        ))
 
     def get_credentials(self) -> dict:
         """Returns current tgtg api credentials.
@@ -188,6 +205,7 @@ class TgtgClient:
             access_token=self.access_token,
             **kwargs,
         )
+        old_datadome_cookie = self.datadome_cookie
         self.datadome_cookie = self.session.cookies.get("datadome")
         if response.status_code in (HTTPStatus.OK, HTTPStatus.ACCEPTED):
             self.captcha_error_count = 0
@@ -201,20 +219,22 @@ class TgtgClient:
         if response.status_code == 403:
             log.debug("Captcha Error 403!")
             self.captcha_error_count += 1
-            if self.captcha_error_count == 1:
-                self.user_agent = self._get_user_agent()
-            elif self.captcha_error_count == 2:
-                self.session = self._create_session()
-            elif self.captcha_error_count == 4:
-                self.datadome_cookie = None
-                self.session = self._create_session()
-            elif self.captcha_error_count >= 10:
+            if self.captcha_error_count == 1 and self.datadome_cookie and self.datadome_cookie != old_datadome_cookie:
+                log.warning('Retrying with new datadome cookie ...')
+                log.debug(f'c0 dd0 = {old_datadome_cookie} dd1 = {self.datadome_cookie}')
+            elif self.captcha_error_count <= 2:
+                self.last_time_token_refreshed = None
+                time.sleep(30)
+                log.debug(f'c1 dd0 = {old_datadome_cookie} dd1 = {self.datadome_cookie}')
+            else:
                 log.warning("Too many captcha Errors! Sleeping for 10 minutes...")
                 time.sleep(10 * 60)
                 log.info("Retrying ...")
                 self.captcha_error_count = 0
+                self.datadome_cookie = None
+                self.uuid = uuid4()
                 self.session = self._create_session()
-            time.sleep(1)
+            time.sleep(5)
             return self._post(path, **kwargs)
         raise TgtgAPIError(response.status_code, response.content)
 
@@ -268,6 +288,23 @@ class TgtgClient:
             self._refresh_token()
         else:
             log.info("Starting login process ...")
+            tracking_uuid = str(uuid4())
+            self._post(
+                API_TRACKING_ENDPOINT,
+                json={"uuid": tracking_uuid,
+                      "event_type": "BEFORE_COOKIE_CONSENT",
+                      "country_code": "us",
+                      "is_logged_in": False,
+                      "is_from_deeplink": False}
+            )
+            self._post(
+                API_TRACKING_ENDPOINT,
+                json={"uuid": tracking_uuid,
+                      "event_type": "AFTER_COOKIE_CONSENT",
+                      "country_code": "us",
+                      "is_logged_in": False,
+                      "is_from_deeplink": False}
+            )
             response = self._post(
                 AUTH_BY_EMAIL_ENDPOINT,
                 json={
@@ -313,8 +350,8 @@ class TgtgClient:
     def get_items(
         self,
         *,
-        latitude=0.0,
-        longitude=0.0,
+        latitude=None,
+        longitude=None,
         radius=21,
         page_size=20,
         page=1,
@@ -331,6 +368,9 @@ class TgtgClient:
     ) -> List[dict]:
         self.login()
         # fields are sorted like in the app
+        if latitude is None or longitude is None:
+            latitude = self.latitude
+            longitude = self.longitude
         data = {
             "origin": {"latitude": latitude, "longitude": longitude},
             "radius": radius,
@@ -349,6 +389,56 @@ class TgtgClient:
         }
         response = self._post(API_ITEM_ENDPOINT, json=data)
         return response.json().get("items", [])
+
+    def get_items2(
+        self,
+        *,
+        latitude=None,
+        longitude=None,
+        radius=21,
+        favorites_only=True,
+    ) -> List[dict]:
+        self.login()
+        # fields are sorted like in the app
+        if latitude is None or longitude is None:
+            latitude = self.latitude
+            longitude = self.longitude
+        data = {
+            "origin": {"latitude": latitude, "longitude": longitude},
+            "radius": radius,
+            "supported_buckets": [{
+                "type": "ACTION",
+                "display_types": ["CAROUSEL", "DONATION", "JOB_APPLICATION", "RATE_ORDER", "MANUFACTURER", "STORE_REFERRAL", "DELIVERY_TAB"]
+            }, {
+                "type": "HEADER",
+                "display_types": ["SOLD_OUT", "ALMOST_SOLD_OUT", "NOTHING_NEARBY", "NOT_LIVE_HERE", "FILTERS_NO_RESULT"]
+            }, {
+                "type": "ITEM",
+                "display_types": ["FLASH_SALES", "CATEGORY", "CLASSIC", "FAVORITES", "RECOMMENDATIONS", "CHARITY", "MANUFACTURER", "DELIVERY_TAB"]
+            }, {
+                "type": "FILTER",
+                "display_types": ["QUICK_FILTERS"]
+            }],
+            "experimental_group": "DEFAULT",
+            "debug_mode": False,
+            "is_gps": False,
+            "origin_updated": False,
+            "filters": [],
+            "crm_campaign": {}
+        }
+        response = self._post(API_ITEM2_ENDPOINT, json=data)
+        buckets = response.json().get("buckets", [])
+        all = dict()
+        for b in buckets:
+            if favorites_only:
+                if b['display_type'] == "FAVORITES":
+                    return b['items']
+            else:
+                for ita in b['items']:
+                    it = ita['item']
+                    all[it['item_id']] = ita
+        items = list(all.values())
+        return items
 
     def get_item(self, item_id: str) -> dict:
         self.login()
@@ -374,6 +464,14 @@ class TgtgClient:
                 break
             page += 1
         return items
+
+    def get_favorites2(self) -> List[dict]:
+        """Returns favorites of the current tgtg account
+
+        Returns:
+            List: List of items
+        """
+        return self.get_items2(favorites_only=True)
 
     def set_favorite(self, item_id: str, is_favorite: bool) -> None:
         self.login()

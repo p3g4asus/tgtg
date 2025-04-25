@@ -56,6 +56,7 @@ class Scanner:
         self.location: Union[Location, None] = None
         self.tgtg_client = TgtgClient(
             email=self.config.tgtg.username,
+            user_agent=self.config.tgtg.agent,
             timeout=self.config.tgtg.timeout,
             access_token_lifetime=self.config.tgtg.access_token_lifetime,
             max_polling_tries=self.config.tgtg.max_polling_tries,
@@ -64,6 +65,8 @@ class Scanner:
             refresh_token=self.config.tgtg.refresh_token,
             datadome_cookie=self.config.tgtg.datadome,
             base_url=self.config.tgtg.base_url,
+            latitude=self.config.tgtg.latitude,
+            longitude=self.config.tgtg.longitude
         )
         self.reservations = Reservations(self.tgtg_client)
         self.favorites = Favorites(self.tgtg_client)
@@ -72,14 +75,14 @@ class Scanner:
         """
         Returns an item for test notifications
         """
-        items = sorted(self._get_favorites(), key=lambda x: x.items_available, reverse=True)
+        items = sorted(self._get_favorites(2), key=lambda x: x.items_available, reverse=True)
 
         if items:
             return items[0]
         items = sorted(
             [
                 Item(item, self.location, self.config.locale)
-                for item in self.tgtg_client.get_items(favorites_only=False, latitude=53.5511, longitude=9.9937, radius=50)
+                for item in self.tgtg_client.get_items2(favorites_only=False, latitude=53.5511, longitude=9.9937, radius=50)
             ],
             key=lambda x: x.items_available,
             reverse=True,
@@ -102,7 +105,7 @@ class Scanner:
                     items.append(Item(item_dict, self.location, self.config.locale))
             except TgtgAPIError as err:
                 log.error(err)
-        items += self._get_favorites()
+        items += self._get_favorites(2)
         for item in items:
             self._check_item(item)
 
@@ -119,7 +122,7 @@ class Scanner:
             self.tgtg_client.datadome_cookie,
         )
 
-    def _get_favorites(self) -> list[Item]:
+    def _get_favorites(self, v=1) -> list[Item]:
         """
         Get favorites as list of Items
 
@@ -127,7 +130,7 @@ class Scanner:
             List: List of items
         """
         try:
-            items = self.get_favorites()
+            items = self.get_favorites(v)
         except TgtgAPIError as err:
             log.error(err)
             return []
@@ -139,13 +142,10 @@ class Scanner:
         and triggers notifications.
         """
         state_item = self.state.get(item.item_id)
-        if state_item is not None:
-            if state_item.items_available == item.items_available:
-                return
-            log.info("%s - new amount: %s", item.display_name, item.items_available)
-            if state_item.items_available == 0 and item.items_available > 0:
-                self._send_messages(item)
-                self.metrics.send_notifications.labels(item.item_id, item.display_name).inc()
+        if state_item is not None and (state_item.items_available or item.items_available) and (state_item.items_available != item.items_available or state_item.price != item.price):
+            log.info(f"{item.display_name} - new amount: {item.items_available} @ {item.price}")
+            self._send_messages(item)
+            self.metrics.send_notifications.labels(item.item_id, item.display_name).inc()
         self.metrics.update(item)
         self.state[item.item_id] = item
 
@@ -231,7 +231,7 @@ class Scanner:
         """
         return self.tgtg_client.get_credentials()
 
-    def get_items(self, lat, lng, radius) -> List[dict]:
+    def get_items(self, lat, lng, radius, v=1) -> List[dict]:
         """Get items by geographic position.
 
         Args:
@@ -247,15 +247,20 @@ class Scanner:
             latitude=lat,
             longitude=lng,
             radius=radius,
+        ) if v != 2 else self.tgtg_client.get_items2(
+            favorites_only=False,
+            latitude=lat,
+            longitude=lng,
+            radius=radius,
         )
 
-    def get_favorites(self) -> List[dict]:
+    def get_favorites(self, v=1) -> List[dict]:
         """Returns favorites of the current tgtg account
 
         Returns:
             List: List of items
         """
-        return self.tgtg_client.get_favorites()
+        return self.tgtg_client.get_favorites() if v != 2 else self.tgtg_client.get_favorites2()
 
     def set_favorite(self, item_id: str) -> None:
         """Add item to favorites.
@@ -275,7 +280,7 @@ class Scanner:
 
     def unset_all_favorites(self) -> None:
         """Remove all items from favorites."""
-        item_ids = [item.get("item", {}).get("item_id") for item in self.get_favorites()]
+        item_ids = [item.get("item", {}).get("item_id") for item in self.get_favorites(2)]
         for item_id in item_ids:
             self.unset_favorite(item_id)
 
