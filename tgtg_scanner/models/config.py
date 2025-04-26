@@ -495,7 +495,7 @@ class TgtgConfig(BaseConfig):
     max_polling_tries: int = 24
     polling_wait_time: int = 5
     base_url: str = BASE_URL
-    agent: str = r"TGTG/25.4.1 Dalvik/2.1.0 (Linux; U; Android 12; sdk_gphone64_arm64 Build/SE1A.220203.002.A1)"
+    agent: str = ''
     latitude: float = 42.9
     longitude: float = 13.8
 

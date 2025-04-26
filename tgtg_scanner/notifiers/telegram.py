@@ -112,6 +112,7 @@ class Telegram(Notifier):
             CommandHandler("orders", self._cancel_orders_menu),
             CommandHandler("cancelall", self._cancel_all_orders),
             CommandHandler("listfavorites", self._list_favorites),
+            CommandHandler("listitems", self._list_items),
             CommandHandler("listfavoriteids", self._list_favorite_ids),
             CommandHandler("addfavorites", self._add_favorites),
             CommandHandler("removefavorites", self._remove_favorites),
@@ -119,6 +120,14 @@ class Telegram(Notifier):
             MessageHandler(
                 filters.Regex(r"^https:\/\/share\.toogoodtogo\.com\/item\/(\d+)\/?"),
                 self._url_handler,
+            ),
+            MessageHandler(
+                filters.Regex(r"^/fav(\d+)"),
+                self._set_favorite_handler,
+            ),
+            MessageHandler(
+                filters.Regex(r"^/unfav(\d+)"),
+                self._unset_favorite_handler,
             ),
             CallbackQueryHandler(self._callback_query_handler),
         ]
@@ -138,6 +147,7 @@ class Telegram(Notifier):
                 BotCommand("orders", "List and cancel active Orders"),
                 BotCommand("cancelall", "Cancels all active orders"),
                 BotCommand("listfavorites", "List all favorites"),
+                BotCommand("listitems", "List items near you"),
                 BotCommand("listfavoriteids", "List all item ids from favorites"),
                 BotCommand("addfavorites", "Add item ids to favorites"),
                 BotCommand("removefavorites", "Remove Item ids from favorites"),
@@ -219,6 +229,10 @@ class Telegram(Notifier):
         image = None
         if isinstance(item, Item) and not self.only_reservations and not self.mute:
             message = self._unmask(self.body, item)
+            if item.favorite == 'No':
+                message += f'\n/fav{item.item_id}'
+            else:
+                message += f'\n/unfav{item.item_id}'
             if self.image:
                 image = self._unmask_image(self.image, item)
         elif isinstance(item, Reservation):
@@ -328,6 +342,16 @@ class Telegram(Notifier):
             await update.message.reply_text("\n".join([f"• {item.item_id} - {item.display_name}" for item in favorites]))
 
     @_private
+    async def _list_items(self, update: Update, _) -> None:
+        favorites = self.favorites.get_items()
+        if not favorites:
+            await update.message.reply_text("You currently don't have any items near you.")
+        else:
+            loop = asyncio.get_event_loop()
+            for i, item in enumerate(favorites):
+                loop.call_later((i + 1) * 0.1, self.send, item)
+
+    @_private
     async def _list_favorite_ids(self, update: Update, _) -> None:
         favorites = self.favorites.get_favorites()
         if not favorites:
@@ -380,6 +404,18 @@ class Telegram(Notifier):
         self.favorites.remove_favorite(item_ids)
         await update.message.reply_text(f"Removed the following item ids from favorites: {' '.join(item_ids)}")
         log.debug("Removed the following item ids from favorites: '%s'", item_ids)
+
+    @_private
+    async def _set_favorite_handler(self, update: Update, context: CallbackContext) -> None:
+        item_id = context.matches[0].group(1)
+        self.favorites.add_favorites([item_id])
+        await update.message.reply_text(f"Set favorite command for item id {item_id} was sent")
+
+    @_private
+    async def _unset_favorite_handler(self, update: Update, context: CallbackContext) -> None:
+        item_id = context.matches[0].group(1)
+        self.favorites.remove_favorite([item_id])
+        await update.message.reply_text(f"Unset favorite command for item id {item_id} was sent")
 
     @_private
     async def _url_handler(self, update: Update, context: CallbackContext) -> None:

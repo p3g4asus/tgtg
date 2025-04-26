@@ -82,7 +82,7 @@ class Scanner:
         items = sorted(
             [
                 Item(item, self.location, self.config.locale)
-                for item in self.tgtg_client.get_items2(favorites_only=False, latitude=53.5511, longitude=9.9937, radius=50)
+                for item in self.tgtg_client.get_items2(favorites_only=False)
             ],
             key=lambda x: x.items_available,
             reverse=True,

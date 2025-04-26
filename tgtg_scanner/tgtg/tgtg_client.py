@@ -205,7 +205,6 @@ class TgtgClient:
             access_token=self.access_token,
             **kwargs,
         )
-        old_datadome_cookie = self.datadome_cookie
         self.datadome_cookie = self.session.cookies.get("datadome")
         if response.status_code in (HTTPStatus.OK, HTTPStatus.ACCEPTED):
             self.captcha_error_count = 0
@@ -219,21 +218,32 @@ class TgtgClient:
         if response.status_code == 403:
             log.debug("Captcha Error 403!")
             self.captcha_error_count += 1
-            if self.captcha_error_count == 1 and self.datadome_cookie and self.datadome_cookie != old_datadome_cookie:
-                log.warning('Retrying with new datadome cookie ...')
-                log.debug(f'c0 dd0 = {old_datadome_cookie} dd1 = {self.datadome_cookie}')
-            elif self.captcha_error_count <= 2:
-                self.last_time_token_refreshed = None
-                time.sleep(30)
-                log.debug(f'c1 dd0 = {old_datadome_cookie} dd1 = {self.datadome_cookie}')
-            else:
-                log.warning("Too many captcha Errors! Sleeping for 10 minutes...")
-                time.sleep(10 * 60)
-                log.info("Retrying ...")
-                self.captcha_error_count = 0
-                self.datadome_cookie = None
-                self.uuid = uuid4()
+            if self.captcha_error_count == 1 and self.fixed_user_agent:
+                self.captcha_error_count += 1
+            if self.captcha_error_count == 1:
+                self.user_agent = self._get_user_agent()
+            elif self.captcha_error_count == 2:
                 self.session = self._create_session()
+            elif self.captcha_error_count == 4:
+                self.datadome_cookie = None
+                self.session = None
+            elif self.captcha_error_count >= 9:
+                try:
+                    js = response.json()
+                    log.warning(f"Please solve the captcha in the browser: {js['url']}")
+                except Exception:
+                    pass
+                if self.captcha_error_count == 9:
+                    wt = 1.5
+                else:
+                    wt = 10
+                    self.captcha_error_count = 0
+                    self.datadome_cookie = None
+                    self.uuid = uuid4()
+                    self.session = self._create_session()
+                log.warning(f'Sleeping for {wt} minutes ...')
+                time.sleep(wt * 60)
+                log.info("Retrying ...")
             time.sleep(5)
             return self._post(path, **kwargs)
         raise TgtgAPIError(response.status_code, response.content)
@@ -288,23 +298,25 @@ class TgtgClient:
             self._refresh_token()
         else:
             log.info("Starting login process ...")
-            tracking_uuid = str(uuid4())
-            self._post(
-                API_TRACKING_ENDPOINT,
-                json={"uuid": tracking_uuid,
-                      "event_type": "BEFORE_COOKIE_CONSENT",
-                      "country_code": "us",
-                      "is_logged_in": False,
-                      "is_from_deeplink": False}
-            )
-            self._post(
-                API_TRACKING_ENDPOINT,
-                json={"uuid": tracking_uuid,
-                      "event_type": "AFTER_COOKIE_CONSENT",
-                      "country_code": "us",
-                      "is_logged_in": False,
-                      "is_from_deeplink": False}
-            )
+            # tracking_uuid = str(uuid4())
+            # self._post(
+            #     API_TRACKING_ENDPOINT,
+            #     json={"uuid": tracking_uuid,
+            #           "event_type": "BEFORE_COOKIE_CONSENT",
+            #           "country_code": "us",
+            #           "is_logged_in": False,
+            #           "is_from_deeplink": False}
+            # )
+            # time.sleep(10)
+            # self._post(
+            #     API_TRACKING_ENDPOINT,
+            #     json={"uuid": tracking_uuid,
+            #           "event_type": "AFTER_COOKIE_CONSENT",
+            #           "country_code": "us",
+            #           "is_logged_in": False,
+            #           "is_from_deeplink": False}
+            # )
+            # time.sleep(2)
             response = self._post(
                 AUTH_BY_EMAIL_ENDPOINT,
                 json={
@@ -395,7 +407,7 @@ class TgtgClient:
         *,
         latitude=None,
         longitude=None,
-        radius=21,
+        radius=10,
         favorites_only=True,
     ) -> List[dict]:
         self.login()
@@ -434,9 +446,10 @@ class TgtgClient:
                 if b['display_type'] == "FAVORITES":
                     return b['items']
             else:
-                for ita in b['items']:
-                    it = ita['item']
-                    all[it['item_id']] = ita
+                if 'items' in b:
+                    for ita in b['items']:
+                        it = ita['item']
+                        all[it['item_id']] = ita
         items = list(all.values())
         return items
 
