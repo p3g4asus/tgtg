@@ -209,7 +209,11 @@ class Telegram(Notifier):
                 val = str(getattr(item, match.group(1)))
                 val = escape_markdown(val, version=2)
                 text = text.replace(match.group(0), val)
-        return text
+        if item.favorite == 'No':
+            repl = f'/fav{item.item_id}'
+        else:
+            repl = f'/unfav{item.item_id}'
+        return text.replace(r'${{favcmd}}', repl)
 
     def _unmask_image(self, text: str, item: Item) -> Union[bytes, None]:
         if text in ["${{item_logo_bytes}}", "${{item_cover_bytes}}"]:
@@ -229,10 +233,6 @@ class Telegram(Notifier):
         image = None
         if isinstance(item, Item) and not self.only_reservations and not self.mute:
             message = self._unmask(self.body, item)
-            if item.favorite == 'No':
-                message += f'\n/fav{item.item_id}'
-            else:
-                message += f'\n/unfav{item.item_id}'
             if self.image:
                 image = self._unmask_image(self.image, item)
         elif isinstance(item, Reservation):
@@ -342,8 +342,23 @@ class Telegram(Notifier):
             await update.message.reply_text("\n".join([f"• {item.item_id} - {item.display_name}" for item in favorites]))
 
     @_private
-    async def _list_items(self, update: Update, _) -> None:
-        favorites = self.favorites.get_items()
+    async def _list_items(self, update: Update, context: CallbackContext) -> None:
+        lat = None
+        lon = None
+        radius = None
+        if context.args:
+            if len(context.args) >= 2:
+                try:
+                    lat = float(context.args[0])
+                    lon = float(context.args[1])
+                except Exception:
+                    log.debug(f'Ignoring lat {lat} and lon {lon} args: invalid')
+                if len(context.args) >= 3:
+                    try:
+                        radius = float(context.args[2])
+                    except Exception:
+                        log.debug(f'Ignoring radius {radius} arg: invalid')
+        favorites = self.favorites.get_items(latitude=lat, longitude=lon, radius=radius)
         if not favorites:
             await update.message.reply_text("You currently don't have any items near you.")
         else:

@@ -407,7 +407,7 @@ class TgtgClient:
         *,
         latitude=None,
         longitude=None,
-        radius=10,
+        radius=None,
         favorites_only=True,
     ) -> List[dict]:
         self.login()
@@ -415,6 +415,10 @@ class TgtgClient:
         if latitude is None or longitude is None:
             latitude = self.latitude
             longitude = self.longitude
+        if not radius or radius < 1:
+            radius = 10
+        elif radius > 20:
+            radius = 20
         data = {
             "origin": {"latitude": latitude, "longitude": longitude},
             "radius": radius,

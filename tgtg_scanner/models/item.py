@@ -34,6 +34,8 @@ ATTRS = [
     "item_logo_bytes",
     "item_cover_bytes",
     "link",
+    "distance",
+    "favcmd",
     "distance_walking",
     "distance_driving",
     "distance_transit",
@@ -57,6 +59,7 @@ class Item:
         self.items_available: int = data.get("items_available", 0)
         self.display_name: str = data.get("display_name", "-")
         self.favorite: str = "Yes" if data.get("favorite", False) else "No"
+        self._distance = data.get("distance")
         self.pickup_interval_start: Union[str, None] = data.get("pickup_interval", {}).get("start", None)
         self.pickup_interval_end: Union[str, None] = data.get("pickup_interval", {}).get("end", None)
         self.pickup_location: str = data.get("pickup_location", {}).get("address", {}).get("address_line", "-")
@@ -95,6 +98,18 @@ class Item:
         if self._rating is None:
             return "-"
         return self._format_decimal(round(self._rating, 1))
+
+    @property
+    def distance(self) -> str:
+        if self._distance is None:
+            return "-"
+        if self._distance and self._distance < 1:
+            dist = self._distance * 1000
+            um = "m"
+        else:
+            dist = self._distance
+            um = "km"
+        return self._format_decimal(round(dist, 1)) + f' {um}'
 
     @property
     def price(self) -> str:

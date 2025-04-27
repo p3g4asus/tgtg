@@ -58,13 +58,13 @@ class Favorites:
         """
         return [Item(item) for item in self.client.get_favorites2()]
 
-    def get_items(self) -> List[Item]:
+    def get_items(self, latitude=None, longitude=None, radius=None) -> List[Item]:
         """Get all favorite items
 
         Return:
             List: List of favorite items
         """
-        return [Item(item) for item in self.client.get_items2(favorites_only=False)]
+        return [Item(item) for item in self.client.get_items2(latitude=latitude, longitude=longitude, radius=radius, favorites_only=False)]
 
     def add_favorites(self, item_ids: List[str]) -> None:
         """Adds all the provided item IDs to the favorites
