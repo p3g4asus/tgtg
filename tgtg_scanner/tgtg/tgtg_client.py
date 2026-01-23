@@ -547,7 +547,7 @@ class TgtgClient:
         longitude=None,
         radius=None,
         favorites_only=True,
-    ) -> List[dict]:
+    ) -> list[dict]:
         self.login()
         # fields are sorted like in the app
         if latitude is None or longitude is None:
@@ -621,7 +621,7 @@ class TgtgClient:
             page += 1
         return items
 
-    def get_favorites2(self) -> List[dict]:
+    def get_favorites2(self) -> list[dict]:
         """Returns favorites of the current tgtg account
 
         Returns:
