@@ -2,7 +2,7 @@ import logging
 import sys
 from random import random
 from time import sleep
-from typing import Dict, List, NoReturn, Union
+from typing import NoReturn
 
 from progress.spinner import Spinner
 
@@ -23,7 +23,7 @@ log = logging.getLogger("tgtg")
 
 
 class Activity:
-    """Activity class that creates a spinner if active is True"""
+    """Activity class that creates a spinner if active is True."""
 
     def __init__(self, active: bool):
         self.active = active
@@ -32,31 +32,30 @@ class Activity:
             self.spinner = Spinner("Scanning... ")
 
     def next(self) -> None:
-        """Next function that updates the spinner"""
+        """Next function that updates the spinner."""
         if self.spinner:
             self.spinner.next()
 
     def flush(self) -> None:
-        """Flush function that flushes the spinner"""
+        """Flush function that flushes the spinner."""
         if self.spinner:
             sys.stdout.write("\x1b[80D\x1b[K")
             sys.stdout.flush()
 
 
 class Scanner:
-    """Main Scanner class"""
+    """Main Scanner class."""
 
     def __init__(self, config: Config):
         self.config = config
         self.metrics = Metrics(self.config.metrics_port)
         self.item_ids = set(self.config.item_ids)
         self.cron = self.config.schedule_cron
-        self.state: Dict[str, Item] = {}
-        self.notifiers: Union[Notifiers, None] = None
-        self.location: Union[Location, None] = None
+        self.state: dict[str, Item] = {}
+        self.notifiers: Notifiers | None = None
+        self.location: Location | None = None
         self.tgtg_client = TgtgClient(
             email=self.config.tgtg.username,
-            user_agent=self.config.tgtg.agent,
             timeout=self.config.tgtg.timeout,
             access_token_lifetime=self.config.tgtg.access_token_lifetime,
             max_polling_tries=self.config.tgtg.max_polling_tries,
@@ -65,6 +64,9 @@ class Scanner:
             refresh_token=self.config.tgtg.refresh_token,
             datadome_cookie=self.config.tgtg.datadome,
             base_url=self.config.tgtg.base_url,
+            apk_version=self.config.tgtg.apk_version,
+            user_agent=self.config.tgtg.user_agent,
+            port=self.config.port,
             latitude=self.config.tgtg.latitude,
             longitude=self.config.tgtg.longitude
         )
@@ -72,16 +74,14 @@ class Scanner:
         self.favorites = Favorites(self.tgtg_client)
 
     def _get_test_item(self) -> Item:
-        """
-        Returns an item for test notifications
-        """
+        """Returns an item for test notifications."""
         items = sorted(self._get_favorites(2), key=lambda x: x.items_available, reverse=True)
 
         if items:
             return items[0]
         items = sorted(
             [
-                Item(item, self.location, self.config.locale)
+                Item(item, self.location, self.config.locale, self.config.time_format)
                 for item in self.tgtg_client.get_items2(favorites_only=False)
             ],
             key=lambda x: x.items_available,
@@ -91,9 +91,7 @@ class Scanner:
         return items[0]
 
     def _job(self) -> None:
-        """
-        Job iterates over all monitored items
-        """
+        """Job iterates over all monitored items."""
         if self.notifiers is None:
             raise RuntimeError("Notifiers not initialized!")
 
@@ -102,7 +100,7 @@ class Scanner:
             try:
                 if item_id != "":
                     item_dict = self.tgtg_client.get_item(item_id)
-                    items.append(Item(item_dict, self.location, self.config.locale))
+                    items.append(Item(item_dict, self.location, self.config.locale, self.config.time_format))
             except TgtgAPIError as err:
                 log.error(err)
         items += self._get_favorites(2)
@@ -123,8 +121,7 @@ class Scanner:
         )
 
     def _get_favorites(self, v=1) -> list[Item]:
-        """
-        Get favorites as list of Items
+        """Get favorites as list of Items.
 
         Returns:
             List: List of items
@@ -134,25 +131,31 @@ class Scanner:
         except TgtgAPIError as err:
             log.error(err)
             return []
-        return [Item(item, self.location, self.config.locale) for item in items]
+        return [Item(item, self.location, self.config.locale, self.config.time_format) for item in items]
 
     def _check_item(self, item: Item) -> None:
-        """
-        Checks if the available item amount raised from zero to something
+        """Checks if the available item amount raised from zero to something or price changed
         and triggers notifications.
         """
         state_item = self.state.get(item.item_id)
-        if state_item is not None and (state_item.items_available or item.items_available) and (state_item.items_available != item.items_available or state_item.price != item.price):
-            log.info(f"{item.display_name} - new amount: {item.items_available} @ {item.price}")
-            self._send_messages(item)
-            self.metrics.send_notifications.labels(item.item_id, item.display_name).inc()
+        if state_item is not None:
+            item._previous_price = state_item._price
+            send_notification = False
+            if state_item.items_available != item.items_available:
+                log.info("%s - amount changed from %s to %s", item.display_name, state_item.items_available, item.items_available)
+                send_notification = True
+            if state_item.price != item.price:
+                log.info("%s - price changed from %ss to %s", item.display_name, state_item.price, item.price)
+                if self.config.price_monitoring and item.items_available > 0 and item._price < state_item._price:
+                    send_notification = True
+            if send_notification:
+                self._send_messages(item)
+                self.metrics.send_notifications.labels(item.item_id, item.display_name).inc()
         self.metrics.update(item)
         self.state[item.item_id] = item
 
     def _send_messages(self, item: Item) -> None:
-        """
-        Send notifications for Item
-        """
+        """Send notifications for Item."""
         if self.notifiers is None:
             raise RuntimeError("Notifiers not initialized!")
 
@@ -164,9 +167,7 @@ class Scanner:
         self.notifiers.send(item)
 
     def run(self) -> NoReturn:
-        """
-        Main Loop of the Scanner
-        """
+        """Main Loop of the Scanner."""
         # test tgtg API
         self.tgtg_client.login()
         self.config.save_tokens(
@@ -216,9 +217,7 @@ class Scanner:
                 sleep(60)
 
     def stop(self) -> None:
-        """
-        Stop scanner.
-        """
+        """Stop scanner."""
         if self.notifiers:
             self.notifiers.stop()
 
@@ -231,7 +230,7 @@ class Scanner:
         """
         return self.tgtg_client.get_credentials()
 
-    def get_items(self, lat, lng, radius, v=1) -> List[dict]:
+    def get_items(self, lat, lng, radius, v=1) -> list[dict]:
         """Get items by geographic position.
 
         Args:
@@ -254,7 +253,7 @@ class Scanner:
             radius=radius,
         )
 
-    def get_favorites(self, v=1) -> List[dict]:
+    def get_favorites(self, v=1) -> list[dict]:
         """Returns favorites of the current tgtg account
 
         Returns:
